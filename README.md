@@ -904,3 +904,562 @@ Hiển thị & tải chứng từ IPFS
 LAB 4.9. Running all 
 
 npm start
+
+---
+
+# 📋 COMMAND REFERENCE - COPY & PASTE
+
+## LAB 4.0 - Chuẩn bị môi trường
+
+### System Update & Tools Install
+```bash
+sudo apt update
+sudo apt install -y curl
+sudo apt install -y git
+sudo apt install -y docker.io
+```
+
+### Verify Installation
+```bash
+curl --version
+git --version
+docker --version
+```
+
+### Docker Compose Installation
+```bash
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -fSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+```
+
+### Add User to Docker Group
+```bash
+sudo usermod -aG docker $USER
+```
+
+### Node.js 22.x Install
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install nodejs -y
+nodejs -v
+npm -v
+```
+
+### Go 1.24 Install
+```bash
+wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/go
+export PATH=$PATH:$GOROOT/bin:$GOPATH/bin
+source ~/.profile
+go version
+```
+
+### Hyperledger Fabric 3.1.x Setup
+```bash
+git clone https://github.com/hyperledger/fabric-samples.git
+cd fabric-samples
+curl -LO https://github.com/hyperledger/fabric/releases/download/v3.1.0/hyperledger-fabric-linux-amd64-3.1.0.tar.gz
+tar -xzf hyperledger-fabric-linux-amd64-3.1.0.tar.gz -C .
+./bin/peer version
+```
+
+### Hyperledger Fabric CA 1.5.10 Setup
+```bash
+curl -LO https://github.com/hyperledger/fabric-ca/releases/download/v1.5.10/hyperledger-fabric-ca-linux-amd64-1.5.10.tar.gz
+tar -xzf hyperledger-fabric-ca-linux-amd64-1.5.10.tar.gz -C .
+./bin/fabric-ca-client version
+```
+
+### Add Fabric to PATH
+```bash
+echo 'export PATH=$HOME/fabric-samples/bin:$PATH' >> ~/.bashrc
+echo 'export FABRIC_CFG_PATH=$HOME/fabric-samples/config' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Pull Docker Images
+```bash
+docker pull hyperledger/fabric-peer:3.1
+docker pull hyperledger/fabric-orderer:3.1
+docker pull hyperledger/fabric-ccenv:3.1
+docker pull hyperledger/fabric-ca:1.5.10
+docker images "hyperledger/*" --format "{{.Repository}}:{{.Tag}}" | sort
+```
+
+---
+
+## LAB 4.1 - Hyperledger Fabric Bankchain Network
+
+### Clone Bankchain Project
+```bash
+git clone https://github.com/PacktPublishing/Blockchain-Development-for-Finance-Projects.git
+cd Blockchain-Development-for-Finance-Projects/Chapter4/bankchain
+```
+
+### Check Docker Compose Services
+```bash
+docker compose -f docker-compose-bankchain.yaml config --services
+```
+
+### Start Network Components
+```bash
+docker compose -f docker-compose-bankchain.yaml up -d
+docker compose -f docker-compose-bankchain.yaml up -d orderer.bankchain.com
+docker compose -f docker-compose-bankchain.yaml up -d cli
+docker compose -f docker-compose-bankchain.yaml ps
+```
+
+---
+
+## LAB 4.2 - Blockchain Identities
+
+### Install Fabric Node Libraries
+```bash
+npm i fabric-ca-client fabric-network
+```
+
+### Enroll Admin & Register Users
+```bash
+node enrollAdmin-BankA.js
+node registerUser-BankA.js
+node enrollAdmin-BankB.js
+node registerUser-BankB.js
+ls -l wallet-BankA
+```
+
+---
+
+## LAB 4.3 - Corporate Remittance Chaincode
+
+### Create Chaincode Directory Structure
+```bash
+mkdir -p ~/fabric-samples/chaincode/corprem/lib
+mkdir -p ~/fabric-samples/chaincode/corprem/ccpack
+```
+
+### Create Connection File for External Chaincode
+```bash
+mkdir -p ccpack
+cat > ccpack/connection.json <<'JSON'
+{
+  "address": "host.docker.internal:9999",
+  "dial_timeout": "10s",
+  "tls_required": false
+}
+JSON
+```
+
+### Get Network Name
+```bash
+docker inspect peer0.banka.bankchain.com \
+  --format '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}'
+```
+
+### Enter CLI Container with Network
+```bash
+export NET=bankchain_bankchain-net
+docker run --rm -it --network $NET \
+  -v "$PWD:/work" -w /work \
+  -e FABRIC_CFG_PATH=/work/config \
+  hyperledger/fabric-tools:3.1 bash
+```
+
+### Set Environment Variables for Chaincode
+```bash
+docker exec -it cli bash
+export CHANNEL=bankchannel
+export CCNAME=corprem
+export CC_LABEL=corprem_1
+export CC_PATH=/opt/chaincode/corprem
+export ORDERER=orderer.bankchain.com:7050
+export ORDERER_CA=/opt/crypto/ordererOrganizations/bankchain.com/orderers/orderer.bankchain.com/tls/ca.crt
+export BA_PEER0=peer0.banka.bankchain.com:7051
+export BB_PEER0=peer0.bankb.bankchain.com:7051
+export BA_TLS=/opt/crypto/peerOrganizations/banka.bankchain.com/peers/peer0.banka.bankchain.com/tls/ca.crt
+export BB_TLS=/opt/crypto/peerOrganizations/bankb.bankchain.com/peers/peer0.bankb.bankchain.com/tls/ca.crt
+```
+
+### Package Chaincode
+```bash
+peer lifecycle chaincode package /opt/channel-artifacts/${CCNAME}.tar.gz \
+  --path ${CC_PATH} --lang node --label ${CC_LABEL}
+```
+
+### Install on Bank A
+```bash
+export CORE_PEER_LOCALMSPID=BankAMSP
+export CORE_PEER_ADDRESS=${BA_PEER0}
+export CORE_PEER_MSPCONFIGPATH=/opt/crypto/peerOrganizations/banka.bankchain.com/users/Admin@banka.bankchain.com/msp
+export CORE_PEER_TLS_ENABLED=true
+export CORE_PEER_TLS_ROOTCERT_FILE=${BA_TLS}
+peer lifecycle chaincode install /opt/channel-artifacts/${CCNAME}.tar.gz
+peer lifecycle chaincode queryinstalled | sed -n "s/Package ID: \(.*\), Label: ${CC_LABEL}/export PKGID=\1/p"
+echo $PKGID
+```
+
+### Install on Bank B
+```bash
+export CORE_PEER_LOCALMSPID=BankBMSP
+export CORE_PEER_ADDRESS=${BB_PEER0}
+export CORE_PEER_MSPCONFIGPATH=/opt/crypto/peerOrganizations/bankb.bankchain.com/users/Admin@bankb.bankchain.com/msp
+export CORE_PEER_TLS_ENABLED=true
+export CORE_PEER_TLS_ROOTCERT_FILE=${BB_TLS}
+peer lifecycle chaincode install /opt/channel-artifacts/${CCNAME}.tar.gz
+```
+
+### Approve Chaincode - Bank A
+```bash
+export SIG_POLICY="AND('BankAMSP.peer','BankBMSP.peer')"
+export CORE_PEER_LOCALMSPID=BankAMSP
+export CORE_PEER_ADDRESS=${BA_PEER0}
+export CORE_PEER_MSPCONFIGPATH=/opt/crypto/peerOrganizations/banka.bankchain.com/users/Admin@banka.bankchain.com/msp
+export CORE_PEER_TLS_ROOTCERT_FILE=${BA_TLS}
+peer lifecycle chaincode approveformyorg \
+  --channelID ${CHANNEL} --name ${CCNAME} \
+  --version 1.0 --sequence 1 \
+  --package-id ${PKGID} \
+  --signature-policy "${SIG_POLICY}" \
+  --orderer ${ORDERER} --tls --cafile ${ORDERER_CA}
+```
+
+### Approve Chaincode - Bank B
+```bash
+export CORE_PEER_LOCALMSPID=BankBMSP
+export CORE_PEER_ADDRESS=${BB_PEER0}
+export CORE_PEER_MSPCONFIGPATH=/opt/crypto/peerOrganizations/bankb.bankchain.com/users/Admin@bankb.bankchain.com/msp
+export CORE_PEER_TLS_ROOTCERT_FILE=${BB_TLS}
+peer lifecycle chaincode approveformyorg \
+  --channelID ${CHANNEL} --name ${CCNAME} \
+  --version 1.0 --sequence 1 \
+  --package-id ${PKGID} \
+  --signature-policy "${SIG_POLICY}" \
+  --orderer ${ORDERER} --tls --cafile ${ORDERER_CA}
+```
+
+### Check Commit Readiness
+```bash
+peer lifecycle chaincode checkcommitreadiness \
+  --channelID ${CHANNEL} --name ${CCNAME} \
+  --version 1.0 --sequence 1 \
+  --signature-policy "${SIG_POLICY}" --output json
+```
+
+### Commit Chaincode
+```bash
+export CORE_PEER_LOCALMSPID=BankAMSP
+export CORE_PEER_ADDRESS=${BA_PEER0}
+export CORE_PEER_MSPCONFIGPATH=/opt/crypto/peerOrganizations/banka.bankchain.com/users/Admin@banka.bankchain.com/msp
+export CORE_PEER_TLS_ROOTCERT_FILE=${BA_TLS}
+peer lifecycle chaincode commit \
+  --channelID ${CHANNEL} --name ${CCNAME} \
+  --version 1.0 --sequence 1 \
+  --signature-policy "${SIG_POLICY}" \
+  --orderer ${ORDERER} --tls --cafile ${ORDERER_CA} \
+  --peerAddresses ${BA_PEER0} --tlsRootCertFiles ${BA_TLS} \
+  --peerAddresses ${BB_PEER0} --tlsRootCertFiles ${BB_TLS}
+```
+
+### Query Committed Chaincode
+```bash
+peer lifecycle chaincode querycommitted --channelID ${CHANNEL} --name ${CCNAME}
+```
+
+### Invoke Chaincode - Create Remittance
+```bash
+peer chaincode invoke -C ${CHANNEL} -n ${CCNAME} \
+  -c '{"Args":["Create","R100","ACME","MEGABANK","2500","USD"]}' \
+  --orderer ${ORDERER} --tls --cafile ${ORDERER_CA} \
+  --peerAddresses ${BA_PEER0} --tlsRootCertFiles ${BA_TLS} \
+  --peerAddresses ${BB_PEER0} --tlsRootCertFiles ${BB_TLS} \
+  --waitForEvent
+```
+
+### Query Chaincode - Get Remittance
+```bash
+peer chaincode query -C ${CHANNEL} -n ${CCNAME} \
+  -c '{"Args":["Get","R100"]}'
+```
+
+### Invoke Chaincode - Update Status
+```bash
+peer chaincode invoke -C ${CHANNEL} -n ${CCNAME} \
+  -c '{"Args":["UpdateStatus","R100","SETTLED"]}' \
+  --orderer ${ORDERER} --tls --cafile ${ORDERER_CA} \
+  --peerAddresses ${BA_PEER0} --tlsRootCertFiles ${BA_TLS} \
+  --peerAddresses ${BB_PEER0} --tlsRootCertFiles ${BB_TLS} \
+  --waitForEvent
+```
+
+---
+
+## LAB 4.4 - IPFS Network Setup
+
+### Install IPFS
+```bash
+tar -xzf go-ipfs_*.tar.gz
+cd go-ipfs
+sudo mv ipfs /usr/local/bin/ipfs
+ipfs version
+```
+
+### Initialize IPFS Nodes
+```bash
+IPFS_PATH=~/.ipfs ipfs init
+IPFS_PATH=~/.ipfs2 ipfs init
+```
+
+### Create Swarm Key
+```bash
+ipfs-swarm-key-gen > ~/.ipfs/swarm.key
+cp ~/.ipfs/swarm.key ~/.ipfs2/swarm.key
+```
+
+### Configure Node Addresses
+```bash
+IPFS_PATH=~/.ipfs ipfs config Addresses.API /ip4/127.0.0.1/tcp/5001
+IPFS_PATH=~/.ipfs ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8080
+IPFS_PATH=~/.ipfs2 ipfs config Addresses.API /ip4/127.0.0.1/tcp/5002
+IPFS_PATH=~/.ipfs2 ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8081
+```
+
+### Bootstrap Nodes
+```bash
+IPFS_PATH=~/.ipfs ipfs bootstrap rm --all
+IPFS_PATH=~/.ipfs ipfs bootstrap add /ip4/192.168.10.1/tcp/4001/ipfs/<PeerID_Node1>
+IPFS_PATH=~/.ipfs2 ipfs bootstrap rm --all
+IPFS_PATH=~/.ipfs2 ipfs bootstrap add /ip4/192.168.10.1/tcp/4001/ipfs/<PeerID_Node1>
+```
+
+### Start IPFS Daemons (Each in separate terminal)
+```bash
+IPFS_PATH=~/.ipfs ipfs daemon
+```
+
+```bash
+IPFS_PATH=~/.ipfs2 ipfs daemon
+```
+
+### Test IPFS Network
+```bash
+echo "hello IPFS" > file.txt
+IPFS_PATH=~/.ipfs ipfs add file.txt
+IPFS_PATH=~/.ipfs2 ipfs cat <CID>
+```
+
+---
+
+## LAB 4.5 - PostgreSQL Database Setup
+
+### Install PostgreSQL
+```bash
+sudo apt install postgresql postgresql-contrib
+```
+
+### Create Database Users & Databases
+```bash
+sudo su - postgres
+createuser banka --pwprompt
+createuser bankb --pwprompt
+psql
+```
+
+### Inside psql - Create Databases
+```sql
+CREATE DATABASE banka OWNER banka;
+CREATE DATABASE bankb OWNER bankb;
+\q
+```
+
+### Create Unix Users
+```bash
+exit
+sudo adduser banka
+sudo adduser bankb
+sudo passwd banka
+sudo passwd bankb
+```
+
+### Create Tables - Bank A
+```bash
+su - banka
+psql banka
+```
+
+```sql
+CREATE TABLE customers(
+  user_id serial PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  address VARCHAR NOT NULL,
+  account VARCHAR NOT NULL,
+  balance INTEGER NOT NULL
+);
+
+CREATE TABLE transactions(
+  transactions_id VARCHAR PRIMARY KEY,
+  sname VARCHAR NOT NULL,
+  saddress VARCHAR NOT NULL,
+  saccount VARCHAR NOT NULL,
+  sbank VARCHAR NOT NULL,
+  rname VARCHAR NOT NULL,
+  raddress VARCHAR NOT NULL,
+  raccount VARCHAR NOT NULL,
+  rbank VARCHAR NOT NULL,
+  currency VARCHAR(4) NOT NULL,
+  amount INTEGER NOT NULL,
+  invhash VARCHAR NOT NULL,
+  boehash VARCHAR NOT NULL,
+  dochash VARCHAR NOT NULL,
+  transtype VARCHAR NOT NULL
+);
+```
+
+### Create Tables - Bank B (Same SQL, different database)
+```bash
+exit
+su - bankb
+psql bankb
+```
+
+```sql
+CREATE TABLE customers(
+  user_id serial PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  address VARCHAR NOT NULL,
+  account VARCHAR NOT NULL,
+  balance INTEGER NOT NULL
+);
+
+CREATE TABLE transactions(
+  transactions_id VARCHAR PRIMARY KEY,
+  sname VARCHAR NOT NULL,
+  saddress VARCHAR NOT NULL,
+  saccount VARCHAR NOT NULL,
+  sbank VARCHAR NOT NULL,
+  rname VARCHAR NOT NULL,
+  raddress VARCHAR NOT NULL,
+  raccount VARCHAR NOT NULL,
+  rbank VARCHAR NOT NULL,
+  currency VARCHAR(4) NOT NULL,
+  amount INTEGER NOT NULL,
+  invhash VARCHAR NOT NULL,
+  boehash VARCHAR NOT NULL,
+  dochash VARCHAR NOT NULL,
+  transtype VARCHAR NOT NULL
+);
+```
+
+### Insert Sample Data - Bank A
+```bash
+su - banka
+psql banka
+```
+
+```sql
+INSERT INTO customers (name, account, address, balance)
+VALUES('Acme','ACMEAC8829','New Delhi',1000);
+```
+
+### Insert Sample Data - Bank B
+```bash
+exit
+su - bankb
+psql bankb
+```
+
+```sql
+INSERT INTO customers (name, account, address, balance)
+VALUES('Apex','APXAC09002','Dubai',1000);
+```
+
+---
+
+## LAB 4.6 - Bank Backend Servers
+
+### Create Node.js Project
+```bash
+mkdir bank-backends && cd bank-backends
+npm init -y
+npm install express body-parser multer fabric-ca-client fabric-network fs ipfs-http-client pg
+```
+
+### Create Backend Files
+```bash
+touch backend-BankA.js backend-BankB.js
+```
+
+### Run Backend Servers (Each in separate terminal)
+```bash
+node backend-BankA.js
+```
+
+```bash
+node backend-BankB.js
+```
+
+---
+
+## LAB 4.7 - Transaction Listeners
+
+### Create Listeners Project
+```bash
+mkdir trans-listeners && cd trans-listeners
+npm init -y
+npm install express body-parser fabric-network ipfs-http-client pg fs
+```
+
+### Create Listener Files
+```bash
+touch TransListener-BankA.js TransListener-BankB.js
+```
+
+### Run Listeners (Each in separate terminal)
+```bash
+node TransListener-BankA.js
+```
+
+```bash
+node TransListener-BankB.js
+```
+
+---
+
+## LAB 4.8 - Frontend React App
+
+### Create React Application
+```bash
+npx create-react-app CorpRemApp
+cd CorpRemApp
+mkdir -p src/Components public/uploads
+touch src/Components/Container.js \
+      src/Components/AppLogin.js \
+      src/Components/Transfer.js \
+      src/Components/ViewTransactions.js
+```
+
+### Run Frontend
+```bash
+npm start
+```
+
+---
+
+## Quick Test Commands
+
+### Test Backend API - Get Customer Info
+```bash
+curl -X POST http://localhost:8000/customerinfo \
+  -H "Content-Type: application/json" \
+  -d '{"account":"ACMEAC8829"}'
+```
+
+### Test Backend API - Get Transactions
+```bash
+curl -X GET http://localhost:8000/gettrans?account=ACMEAC8829
+```
+
+---
